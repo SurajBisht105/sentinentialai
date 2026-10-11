@@ -1,0 +1,335 @@
+# app/api/v1/projects.py
+from fastapi import APIRouter, Depends, HTTPException, Query, Path
+from typing import List, Optional
+from pydantic import BaseModel, Field
+from datetime import datetime
+import uuid
+
+from app.dependencies import get_current_user_with_supabase, get_tenant_id
+
+router = APIRouter()
+
+class ProjectBase(BaseModel):
+    name: str
+    description: Optional[str] = None
+    status: str = "active"
+    repo_url: Optional[str] = "https://github.com/example/repo"
+    branch: Optional[str] = "main"
+    language: Optional[str] = "TypeScript"
+
+class ProjectCreate(ProjectBase):
+    scan_types: Optional[List[str]] = Field(default_factory=lambda: ["SAST", "SCA", "SECRETS"])
+
+class ProjectResponse(ProjectBase):
+    id: str
+    tenant_id: str
+    created_at: datetime
+    updated_at: datetime
+    scan_count: int = 0
+    finding_count: int = 0
+    risk_score: int = 0
+    trend: str = "stable"
+    last_scan_at: Optional[datetime] = None
+
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+
+# Initial projects list
+MOCK_PROJECTS: List[dict] = [
+    {
+        "id": "proj-auth-01",
+        "tenant_id": "tenant-default-123",
+        "name": "core-auth-service",
+        "repo_url": "https://github.com/sentinelai/core-auth-service",
+        "branch": "main",
+        "language": "TypeScript",
+        "status": "active",
+        "risk_score": 78,
+        "scan_count": 14,
+        "finding_count": 5,
+        "trend": "down",
+        "last_scan_at": datetime.utcnow().isoformat() + "Z",
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "updated_at": datetime.utcnow().isoformat() + "Z",
+    },
+    {
+        "id": "proj-pay-02",
+        "tenant_id": "tenant-default-123",
+        "name": "payment-gateway-api",
+        "repo_url": "https://github.com/sentinelai/payment-gateway-api",
+        "branch": "main",
+        "language": "Python",
+        "status": "active",
+        "risk_score": 42,
+        "scan_count": 9,
+        "finding_count": 2,
+        "trend": "stable",
+        "last_scan_at": datetime.utcnow().isoformat() + "Z",
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "updated_at": datetime.utcnow().isoformat() + "Z",
+    },
+    {
+        "id": "proj-orch-03",
+        "tenant_id": "tenant-default-123",
+        "name": "agent-orchestrator",
+        "repo_url": "https://github.com/sentinelai/agent-orchestrator",
+        "branch": "develop",
+        "language": "Go",
+        "status": "active",
+        "risk_score": 15,
+        "scan_count": 22,
+        "finding_count": 0,
+        "trend": "down",
+        "last_scan_at": datetime.utcnow().isoformat() + "Z",
+        "created_at": datetime.utcnow().isoformat() + "Z",
+        "updated_at": datetime.utcnow().isoformat() + "Z",
+    },
+]
+
+
+from app.database.supabase import get_supabase_client
+import structlog
+
+logger = structlog.get_logger(__name__)
+
+@router.get("/", response_model=List[ProjectResponse])
+async def get_projects(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    status: Optional[str] = None,
+    current_user: dict = Depends(get_current_user_with_supabase),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Get list of projects for the tenant.
+    """
+    try:
+        supabase = get_supabase_client()
+        query = supabase.table("projects").select("*").range(skip, skip + limit - 1)
+        res = query.execute()
+        if res.data:
+            return [
+                ProjectResponse(
+                    id=p["id"],
+                    tenant_id=p.get("tenant_id", tenant_id),
+                    name=p.get("name", "Project"),
+                    description=p.get("description", f"Repository {p.get('name')}"),
+                    status=p.get("status", "active"),
+                    repo_url=p.get("repo_url", "https://github.com/org/repo"),
+                    branch=p.get("default_branch", "main"),
+                    language=p.get("primary_language", "TypeScript"),
+                    created_at=p.get("created_at", datetime.utcnow().isoformat()),
+                    updated_at=p.get("updated_at", datetime.utcnow().isoformat()),
+                    scan_count=p.get("total_scans", 0),
+                    finding_count=p.get("open_findings", 0),
+                    risk_score=p.get("risk_score", 0),
+                    trend="stable",
+                )
+                for p in res.data
+            ]
+    except Exception as e:
+        logger.error("get_projects_error", error=str(e))
+    return MOCK_PROJECTS
+
+
+@router.get("/{project_id}", response_model=ProjectResponse)
+async def get_project(
+    project_id: str = Path(...),
+    current_user: dict = Depends(get_current_user_with_supabase),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Get a specific project by ID.
+    """
+    try:
+        supabase = get_supabase_client()
+        res = supabase.table("projects").select("*").eq("id", project_id).execute()
+        if res.data:
+            p = res.data[0]
+            return ProjectResponse(
+                id=p["id"],
+                tenant_id=p.get("tenant_id", tenant_id),
+                name=p.get("name", "Project"),
+                description=p.get("description", f"Repository {p.get('name')}"),
+                status=p.get("status", "active"),
+                repo_url=p.get("repo_url", "https://github.com/org/repo"),
+                branch=p.get("default_branch", "main"),
+                language=p.get("primary_language", "TypeScript"),
+                created_at=p.get("created_at", datetime.utcnow().isoformat()),
+                updated_at=p.get("updated_at", datetime.utcnow().isoformat()),
+                scan_count=p.get("total_scans", 0),
+                finding_count=p.get("open_findings", 0),
+                risk_score=p.get("risk_score", 0),
+                trend="stable",
+            )
+    except Exception as e:
+        logger.error("get_project_error", error=str(e))
+
+    for proj in MOCK_PROJECTS:
+        if proj["id"] == project_id:
+            return proj
+    raise HTTPException(status_code=404, detail="Project not found")
+
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Path, BackgroundTasks
+
+@router.post("/", response_model=ProjectResponse)
+async def create_project(
+    project: ProjectCreate,
+    background_tasks: BackgroundTasks = None,
+    current_user: dict = Depends(get_current_user_with_supabase),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Create a new project in database.
+    """
+    name_lower = project.name.lower()
+    url_lower = (project.repo_url or "").lower()
+    
+    if "py" in name_lower or "python" in url_lower:
+        lang = "Python"
+    elif "go" in name_lower or "golang" in url_lower:
+        lang = "Go"
+    elif "java" in name_lower:
+        lang = "Java"
+    elif "rust" in name_lower:
+        lang = "Rust"
+    else:
+        lang = "TypeScript"
+
+    now = datetime.utcnow()
+    
+    try:
+        supabase = get_supabase_client()
+        insert_res = supabase.table("projects").insert({
+            "tenant_id": tenant_id,
+            "name": project.name,
+            "repo_url": project.repo_url or f"https://github.com/org/{project.name}",
+            "default_branch": project.branch or "main",
+            "primary_language": lang,
+            "risk_score": 10,
+            "total_scans": 1,
+            "open_findings": 0,
+        }).execute()
+        if insert_res.data:
+            p = insert_res.data[0]
+            # Automatically create initial scan for the connected repo
+            try:
+                from app.services.scan_service import ScanService
+                scan_service = ScanService()
+                scan = await scan_service.create_scan(
+                    repo_url=p.get("repo_url", project.repo_url),
+                    branch=p.get("default_branch", project.branch or "main"),
+                    scan_types=project.scan_types or ["SAST", "SCA", "SECRETS"],
+                    user_id=current_user.get("id", "user-system"),
+                    tenant_id=tenant_id,
+                )
+                if background_tasks:
+                    background_tasks.add_task(scan_service.trigger_scan_execution, scan)
+                else:
+                    await scan_service.trigger_scan_execution(scan)
+            except Exception as scan_err:
+                logger.warning("initial_scan_trigger_failed", error=str(scan_err))
+
+            return ProjectResponse(
+                id=p["id"],
+                tenant_id=p.get("tenant_id", tenant_id),
+                name=p.get("name", project.name),
+                description=project.description or f"Repository {project.name}",
+                status="active",
+                repo_url=p.get("repo_url", project.repo_url),
+                branch=p.get("default_branch", project.branch),
+                language=p.get("primary_language", lang),
+                created_at=p.get("created_at", now.isoformat()),
+                updated_at=p.get("updated_at", now.isoformat()),
+                scan_count=1,
+                finding_count=0,
+                risk_score=10,
+                trend="stable",
+            )
+    except Exception as e:
+        logger.error("create_project_db_error", error=str(e))
+
+    new_proj = {
+        "id": f"proj-{uuid.uuid4().hex[:8]}",
+        "tenant_id": tenant_id,
+        "name": project.name,
+        "description": project.description or f"Repository {project.name}",
+        "status": project.status,
+        "repo_url": project.repo_url or "https://github.com/org/repo",
+        "branch": project.branch or "main",
+        "language": lang,
+        "created_at": now,
+        "updated_at": now,
+        "last_scan_at": now,
+        "scan_count": 1,
+        "finding_count": 0,
+        "risk_score": 10,
+        "trend": "stable",
+    }
+    MOCK_PROJECTS.insert(0, new_proj)
+    return new_proj
+
+
+@router.put("/{project_id}", response_model=ProjectResponse)
+async def update_project(
+    project_id: str,
+    project_update: ProjectUpdate,
+    current_user: dict = Depends(get_current_user_with_supabase),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Update a project.
+    """
+    for i, proj in enumerate(MOCK_PROJECTS):
+        if proj["id"] == project_id:
+            if project_update.name:
+                proj["name"] = project_update.name
+            if project_update.description:
+                proj["description"] = project_update.description
+            if project_update.status:
+                proj["status"] = project_update.status
+            proj["updated_at"] = datetime.utcnow()
+            return proj
+            
+    raise HTTPException(status_code=404, detail="Project not found")
+
+
+@router.delete("/{project_id}")
+async def delete_project(
+    project_id: str = Path(...),
+    current_user: dict = Depends(get_current_user_with_supabase),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Delete a project.
+    """
+    global MOCK_PROJECTS
+    MOCK_PROJECTS = [p for p in MOCK_PROJECTS if p["id"] != project_id]
+    return {"message": "Project deleted"}
+
+
+@router.get("/{project_id}/scans")
+async def get_project_scans(
+    project_id: str = Path(...),
+    current_user: dict = Depends(get_current_user_with_supabase),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Get scans for a specific project.
+    """
+    return []
+
+
+@router.get("/{project_id}/vulnerabilities")
+async def get_project_vulnerabilities(
+    project_id: str = Path(...),
+    current_user: dict = Depends(get_current_user_with_supabase),
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Get vulnerabilities for a specific project.
+    """
+    return []

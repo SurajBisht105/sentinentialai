@@ -1,0 +1,61 @@
+# requirements.txt
+
+# FastAPI & Server
+fastapi
+uvicorn[standard]
+gunicorn
+python-multipart
+starlette
+
+# Supabase & Database
+supabase
+psycopg2-binary
+sqlalchemy
+alembic
+asyncpg
+
+# Kafka
+aiokafka
+kafka-python
+
+# AI & LLM
+langchain
+langchain-openai
+langchain-anthropic
+litellm
+tiktoken
+
+# Security & Auth
+python-jose[cryptography]
+passlib[bcrypt]
+cryptography
+
+# Validation
+pydantic
+pydantic-settings
+email-validator
+
+# HTTP & WebSockets
+httpx
+aiohttp
+websockets
+
+# Logging & Monitoring
+structlog
+prometheus-client
+
+# Utilities
+python-dotenv
+tenacity
+backoff
+redis
+
+# Testing
+pytest
+pytest-asyncio
+pytest-cov
+
+# Development
+black
+ruff
+mypy
